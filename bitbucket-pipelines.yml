@@ -1,0 +1,51 @@
+# This is a sample build configuration for JavaScript.
+# Check our guides at https://confluence.atlassian.com/x/14UWN for more examples.
+# Only use spaces to indent your .yml configuration.
+# -----
+# You can specify a custom docker image from Docker Hub as your build environment.
+image: node
+
+# enable Docker for your repository
+options:
+  docker: true
+
+pipelines:
+  default:
+    - step:
+        name: Build Source
+        caches:
+          - node
+        script: # Modify the commands below to build your repository.
+          - npm install
+          - npm rebuild
+          - npm run build
+          - npm test
+    - step:
+        name: Pubish Docker Image
+        script:
+          - export IMAGE_NAME=geosigns/app-color:$BITBUCKET_COMMIT
+          # build the Docker image (this will use the Dockerfile in the root of the repo)
+          - docker build -t $IMAGE_NAME .
+          # authenticate with the Docker Hub registry
+          - docker login --username $DOCKER_HUB_USERNAME --password $DOCKER_HUB_PASSWORD
+          # push the new Docker image to the Docker registry
+          - docker push $IMAGE_NAME
+    - step:
+        # set KUBERNETES_USERNAME and KUBERNETES_PASSWORD as environment variables
+        # this assumes your Docker image is already pushed to DockerHub with a version of BITBUCKET_BUILD_NUMBER
+        # and is running on the Kubernetes cluster. Use the following command locally to run the image before setting the deployment:
+        # kubectl run <app-name> --image=<my.dockerhub.username>/<image-name>:latest
+        name: Deploy to Kubernetes
+        deployment: test   # set to test, staging or production
+        # trigger: manual  # uncomment to have a manual step
+        image: atlassian/pipelines-kubectl
+        script:
+          - echo $KUBE_TOKEN | base64 -d > ./kube_token
+          - echo $KUBE_CA | base64 -d > ./kube_ca
+          # Configure kubectl
+          - kubectl config set-cluster $KUBERNETES_CLUSTER --server=$KUBERNETES_SERVER --certificate-authority="$(pwd)/kube_ca"
+          - kubectl config set-credentials bitbucket --token="$(cat ./kube_token)"
+          - kubectl config set-context development --cluster=$KUBERNETES_CLUSTER --user=bitbucket
+          - kubectl config use-context development
+          # Update the deployment to use the new Docker image
+          - kubectl set image deployment/app-color app-color=geosigns/app-color:$BITBUCKET_COMMIT
